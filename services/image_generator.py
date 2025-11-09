@@ -30,27 +30,36 @@ class ImageGenerator:
         self,
         api_key: Optional[str] = None,
         model: str = "black-forest-labs/flux-schnell",
-        output_dir: str = "storage/generated"
+        output_dir: str = "storage/generated",
+        use_local: bool = True  # Use local SD by default
     ):
         """
         Initialize image generator.
 
         Args:
-            api_key: Replicate API key
+            api_key: Replicate API key (optional if use_local=True)
             model: Flux model to use (flux-schnell is fastest, flux-dev is higher quality)
             output_dir: Directory to save generated images
+            use_local: Use local Stable Diffusion instead of Replicate
         """
+        self.use_local = use_local or os.getenv("USE_LOCAL_IMAGE_GEN", "true").lower() == "true"
         self.api_key = api_key or os.getenv("REPLICATE_API_TOKEN")
         self.model = model
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.pipeline = None
 
-        if not self.api_key:
-            raise ValueError("Replicate API token is required")
+        if not self.use_local:
+            if not self.api_key:
+                logger.warning("No Replicate API key, falling back to local generation")
+                self.use_local = True
+            else:
+                # Set API token
+                os.environ["REPLICATE_API_TOKEN"] = self.api_key
+                logger.info(f"Image generator initialized with Replicate model: {model}")
 
-        # Set API token
-        os.environ["REPLICATE_API_TOKEN"] = self.api_key
-        logger.info(f"Image generator initialized with model: {model}")
+        if self.use_local:
+            logger.info(f"Image generator initialized with local Stable Diffusion")
 
     async def generate_background(
         self,
@@ -77,8 +86,99 @@ class ImageGenerator:
         # Build the full prompt
         prompt = self._build_prompt(scene_description, avatar_context, style)
 
+        if self.use_local:
+            return await self._generate_local(prompt, aspect_ratio, save_name)
+        else:
+            return await self._generate_replicate(prompt, aspect_ratio, save_name)
+
+    async def _generate_local(
+        self,
+        prompt: str,
+        aspect_ratio: str,
+        save_name: Optional[str]
+    ) -> GeneratedImage:
+        """Generate image using local Flux Dev FP8."""
+
         try:
-            logger.info(f"Generating image with Flux: {scene_description[:50]}...")
+            logger.info(f"Generating image locally with Flux: {prompt[:50]}...")
+
+            # Import here to avoid loading if not needed
+            from diffusers import FluxPipeline
+            import torch
+
+            # Load pipeline if not already loaded
+            if self.pipeline is None:
+                logger.info("Loading Flux Dev FP8 pipeline...")
+
+                # Path to your Flux model
+                flux_path = os.getenv("FLUX_MODEL_PATH", "/home/magiccat/ComfyUI/models/checkpoints/FLUX1/flux1-dev-fp8.safetensors")
+
+                self.pipeline = FluxPipeline.from_single_file(
+                    flux_path,
+                    torch_dtype=torch.bfloat16
+                )
+                self.pipeline.to("cuda")
+                logger.info("Flux Dev FP8 pipeline loaded")
+
+            # Calculate dimensions from aspect ratio (Flux works best with these)
+            if aspect_ratio == "16:9":
+                width, height = 1024, 576
+            elif aspect_ratio == "4:3":
+                width, height = 896, 672
+            else:
+                width, height = 1024, 1024
+
+            # Generate image
+            image = self.pipeline(
+                prompt=prompt,
+                num_inference_steps=20,  # Flux is fast, 20 steps is good
+                width=width,
+                height=height,
+                guidance_scale=3.5
+            ).images[0]
+
+            # Generate filename if not provided
+            if not save_name:
+                import hashlib
+                from datetime import datetime
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                hash_suffix = hashlib.md5(prompt.encode()).hexdigest()[:8]
+                save_name = f"bg_{timestamp}_{hash_suffix}.jpg"
+
+            # Save image
+            image_path = self.output_dir / save_name
+            image.save(image_path, quality=95)
+
+            logger.info(f"Image saved to: {image_path}")
+
+            # Cleanup VRAM
+            self.cleanup()
+
+            return GeneratedImage(
+                image_path=str(image_path),
+                prompt=prompt,
+                model="flux-dev-fp8-local",
+                metadata={
+                    "width": width,
+                    "height": height,
+                    "aspect_ratio": aspect_ratio
+                }
+            )
+
+        except Exception as e:
+            logger.error(f"Error generating image locally: {e}")
+            raise
+
+    async def _generate_replicate(
+        self,
+        prompt: str,
+        aspect_ratio: str,
+        save_name: Optional[str]
+    ) -> GeneratedImage:
+        """Generate image using Replicate Flux API."""
+
+        try:
+            logger.info(f"Generating image with Flux: {prompt[:50]}...")
 
             # Run Flux model
             output = replicate.run(
@@ -190,6 +290,19 @@ class ImageGenerator:
 
         logger.info(f"Generated {len(images)}/{len(scene_descriptions)} images")
         return images
+
+    def cleanup(self):
+        """Cleanup VRAM by unloading the image generation pipeline."""
+        if self.pipeline is not None:
+            logger.info("Cleaning up image generation pipeline...")
+            try:
+                import torch
+                del self.pipeline
+                self.pipeline = None
+                torch.cuda.empty_cache()
+                logger.info("Image pipeline unloaded, VRAM freed")
+            except Exception as e:
+                logger.warning(f"Error during cleanup: {e}")
 
     def use_default_background(self, background_type: str = "professional") -> str:
         """

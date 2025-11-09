@@ -11,6 +11,10 @@ from typing import List, Tuple, Optional
 
 import gradio as gr
 from loguru import logger
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
