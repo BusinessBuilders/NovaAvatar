@@ -20,6 +20,22 @@ pretrained_models/
 demo_out/
 examples/
 
+# Storage and generated content
+storage/
+uploads/
+generated/
+videos/
+queue/
+
+# Configuration
+.env
+.env.local
+*.env
+!.env.example
+
+# Project documentation
+CLAUDE.md
+
 # IDE
 .vscode/
 .idea/
