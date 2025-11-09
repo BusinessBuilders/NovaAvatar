@@ -151,6 +151,23 @@ class NovaAvatarApp:
             wrap=True
         )
 
+        # Preview section
+        preview_btn = gr.Button("📄 Preview Selected Article & Script", variant="secondary")
+
+        with gr.Row():
+            with gr.Column():
+                article_preview = gr.Textbox(
+                    label="Article Preview",
+                    lines=10,
+                    placeholder="Article text will appear here..."
+                )
+            with gr.Column():
+                script_preview = gr.Textbox(
+                    label="Generated Script Preview",
+                    lines=10,
+                    placeholder="GPT-4 script will appear here..."
+                )
+
         with gr.Row():
             style_choice = gr.Dropdown(
                 label="Script Style",
@@ -197,6 +214,64 @@ class NovaAvatarApp:
                 logger.error(f"Scraping failed: {e}")
                 return f"❌ Error: {str(e)}", []
 
+        async def preview_article(dataframe_data, style, dur):
+            try:
+                # Get selected items
+                selected = []
+                for i, row in enumerate(dataframe_data):
+                    if row[0]:  # checkbox is True
+                        selected.append(self.scraped_items[i])
+
+                if not selected:
+                    return "⚠️ No items selected", ""
+
+                # Preview first selected item only
+                item = selected[0]
+
+                # Fetch full article
+                article_text = "Fetching article...\n\n"
+                if item.url:
+                    full_text = await self.orchestrator.content_scraper.fetch_full_article(item.url)
+                    if full_text:
+                        # Show first 1500 characters
+                        article_text = f"📰 {item.title}\n\n"
+                        article_text += f"Source: {item.source_name}\n"
+                        article_text += f"URL: {item.url}\n\n"
+                        article_text += "--- Article Text ---\n\n"
+                        article_text += full_text[:1500]
+                        if len(full_text) > 1500:
+                            article_text += f"\n\n... ({len(full_text) - 1500} more characters)"
+                    else:
+                        article_text = f"❌ Could not fetch article from {item.url}\n\n"
+                        article_text += f"Using description instead:\n\n{item.description}"
+                        full_text = item.description
+                else:
+                    article_text = f"ℹ️ No URL available\n\n{item.description}"
+                    full_text = item.description
+
+                # Generate script preview
+                script_text = "Generating script preview with GPT-4...\n"
+                script = await self.orchestrator.script_generator.generate_script(
+                    content_title=item.title,
+                    content_description=full_text if full_text else item.description,
+                    style=ScriptStyle(style),
+                    duration=int(dur)
+                )
+
+                script_text = f"🎬 Generated Script ({script.word_count} words, ~{script.estimated_duration}s)\n\n"
+                script_text += f"Style: {style}\n"
+                script_text += f"Target Duration: {dur}s\n\n"
+                script_text += "--- Script ---\n\n"
+                script_text += script.script
+                script_text += f"\n\n--- Scene Description ---\n\n"
+                script_text += script.scene_description
+
+                return article_text, script_text
+
+            except Exception as e:
+                logger.error(f"Preview failed: {e}")
+                return f"❌ Error: {str(e)}", ""
+
         async def generate_selected(dataframe_data, style, dur):
             try:
                 # Get selected items
@@ -239,6 +314,12 @@ class NovaAvatarApp:
             fn=lambda s, m: asyncio.run(scrape_content(s, m)),
             inputs=[search_term, max_items],
             outputs=[scrape_status, scraped_content]
+        )
+
+        preview_btn.click(
+            fn=lambda d, s, dur: asyncio.run(preview_article(d, s, dur)),
+            inputs=[scraped_content, style_choice, duration],
+            outputs=[article_preview, script_preview]
         )
 
         generate_btn.click(
