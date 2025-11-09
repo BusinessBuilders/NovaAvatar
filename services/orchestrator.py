@@ -18,6 +18,7 @@ from rq.job import Job
 from services.content_scraper import ContentScraper, ContentItem
 from services.script_generator import ScriptGenerator, ScriptStyle, VideoScript
 from services.image_generator import ImageGenerator, GeneratedImage
+from services.image_compositor import ImageCompositor, CompositeImage
 from services.tts_service import TTSService, GeneratedAudio
 from services.avatar_service import AvatarService, AvatarVideo
 
@@ -98,6 +99,7 @@ class PipelineOrchestrator:
         self.content_scraper = ContentScraper()
         self.script_generator = ScriptGenerator()
         self.image_generator = ImageGenerator()
+        self.image_compositor = ImageCompositor()
         self.tts_service = TTSService()
         self.avatar_service = AvatarService()
 
@@ -172,6 +174,7 @@ class PipelineOrchestrator:
         style: ScriptStyle = ScriptStyle.PROFESSIONAL,
         duration: int = 45,
         avatar_image: Optional[str] = None,
+        background_prompt: Optional[str] = None,
         progress_callback: Optional[Callable[[int, str], None]] = None
     ) -> VideoJob:
         """
@@ -237,8 +240,12 @@ class PipelineOrchestrator:
             if progress_callback:
                 progress_callback(30, "Generating background...")
 
+            # Use custom background prompt if provided, otherwise use GPT-4 scene description
+            bg_description = background_prompt if background_prompt else script.scene_description
+            logger.info(f"[{job_id}] Background: {bg_description[:100]}...")
+
             background = await self.image_generator.generate_background(
-                scene_description=script.scene_description,
+                scene_description=bg_description,
                 style="photorealistic"
             )
 
@@ -259,6 +266,31 @@ class PipelineOrchestrator:
 
             job.audio_file = audio.audio_path
             job.status = JobStatus.GENERATING_VIDEO
+            job.progress = 60
+            self._save_jobs()
+
+            # Stage 3.5: Composite avatar onto background
+            import os
+            avatar_path = avatar_image if avatar_image else os.getenv("BASE_AVATAR_PATH", "examples/images/bill.png")
+            use_compositing = os.getenv("USE_AVATAR_COMPOSITING", "true").lower() == "true"
+
+            if use_compositing:
+                logger.info(f"[{job_id}] Compositing avatar onto background...")
+                if progress_callback:
+                    progress_callback(60, "Compositing avatar onto background...")
+
+                composite = await self.image_compositor.composite_avatar(
+                    avatar_path=avatar_path,
+                    background_path=background.image_path,
+                    output_name=f"composite_{job_id}.png"
+                )
+                final_image_path = composite.composite_path
+                logger.info(f"[{job_id}] Composite created: {final_image_path}")
+            else:
+                # Use avatar directly without compositing
+                final_image_path = avatar_path
+                logger.info(f"[{job_id}] Using avatar directly: {final_image_path}")
+
             job.progress = 70
             self._save_jobs()
 
@@ -270,13 +302,9 @@ class PipelineOrchestrator:
             # Build prompt from script title and scene
             video_prompt = f"{script.title}. {script.scene_description}"
 
-            # Use provided avatar image or default from env
-            import os
-            avatar_path = avatar_image if avatar_image else os.getenv("BASE_AVATAR_PATH", "examples/images/bill.png")
-
             video = await self.avatar_service.generate_video(
                 prompt=video_prompt,
-                image_path=avatar_path,
+                image_path=final_image_path,
                 audio_path=audio.audio_path,
                 output_name=f"video_{job_id}",
                 progress_callback=lambda p, s: progress_callback(

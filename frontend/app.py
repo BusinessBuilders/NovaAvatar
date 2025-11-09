@@ -175,6 +175,12 @@ class NovaAvatarApp:
                 value="examples/images/bill.png"
             )
 
+        background_prompt = gr.Textbox(
+            label="Background Prompt (optional - auto-generated from article if empty)",
+            placeholder="e.g., modern office with large windows, city skyline, sunset lighting...",
+            lines=2
+        )
+
         with gr.Row():
             style_choice = gr.Dropdown(
                 label="Script Style",
@@ -265,7 +271,10 @@ class NovaAvatarApp:
                     duration=int(dur)
                 )
 
-                script_text = f"🎬 Generated Script ({script.word_count} words, ~{script.estimated_duration}s)\n\n"
+                # Calculate word count
+                word_count = len(script.script.split())
+
+                script_text = f"🎬 Generated Script ({word_count} words, ~{script.duration_estimate}s)\n\n"
                 script_text += f"Style: {style}\n"
                 script_text += f"Target Duration: {dur}s\n\n"
                 script_text += "--- Script ---\n\n"
@@ -279,7 +288,7 @@ class NovaAvatarApp:
                 logger.error(f"Preview failed: {e}")
                 return f"❌ Error: {str(e)}", ""
 
-        async def generate_selected(dataframe_data, style, dur, avatar_img):
+        async def generate_selected(dataframe_data, style, dur, avatar_img, bg_prompt):
             try:
                 # Get selected items
                 selected = []
@@ -292,7 +301,11 @@ class NovaAvatarApp:
 
                 # Generate videos
                 progress_text = f"Generating {len(selected)} videos...\n"
-                progress_text += f"Using avatar: {avatar_img}\n\n"
+                progress_text += f"Using avatar: {avatar_img}\n"
+                if bg_prompt:
+                    progress_text += f"Background: {bg_prompt}\n\n"
+                else:
+                    progress_text += "Background: Auto-generated from article\n\n"
 
                 for i, item in enumerate(selected):
                     progress_text += f"\n[{i+1}/{len(selected)}] Processing: {item.title}\n"
@@ -306,6 +319,7 @@ class NovaAvatarApp:
                         style=ScriptStyle(style),
                         duration=int(dur),
                         avatar_image=avatar_img,
+                        background_prompt=bg_prompt if bg_prompt else None,
                         progress_callback=progress_callback
                     )
 
@@ -332,8 +346,8 @@ class NovaAvatarApp:
         )
 
         generate_btn.click(
-            fn=lambda d, s, dur, av: asyncio.run(generate_selected(d, s, dur, av)),
-            inputs=[scraped_content, style_choice, duration, avatar_image],
+            fn=lambda d, s, dur, av, bg: asyncio.run(generate_selected(d, s, dur, av, bg)),
+            inputs=[scraped_content, style_choice, duration, avatar_image, background_prompt],
             outputs=[generation_progress]
         )
 
