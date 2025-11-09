@@ -18,7 +18,7 @@ from rq.job import Job
 from services.content_scraper import ContentScraper, ContentItem
 from services.script_generator import ScriptGenerator, ScriptStyle, VideoScript
 from services.image_generator import ImageGenerator, GeneratedImage
-from services.image_compositor import ImageCompositor, CompositeImage
+from services.image_compositor import ImageCompositor, CompositedImage
 from services.tts_service import TTSService, GeneratedAudio
 from services.avatar_service import AvatarService, AvatarVideo
 
