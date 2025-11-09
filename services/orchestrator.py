@@ -148,14 +148,19 @@ class PipelineOrchestrator:
     async def scrape_content(
         self,
         max_items: int = 10,
-        sources: Optional[List[str]] = None
+        sources: Optional[List[str]] = None,
+        search_term: Optional[str] = None
     ) -> List[ContentItem]:
         """Scrape content from configured sources."""
 
-        logger.info(f"Scraping content (max {max_items} items)...")
+        if search_term:
+            logger.info(f"Scraping content for '{search_term}' (max {max_items} items)...")
+        else:
+            logger.info(f"Scraping content (max {max_items} items)...")
 
         items = await self.content_scraper.scrape_all(
-            max_items_per_source=max_items
+            max_items_per_source=max_items,
+            search_term=search_term
         )
 
         logger.info(f"Scraped {len(items)} content items")
@@ -195,14 +200,28 @@ class PipelineOrchestrator:
         self._save_jobs()
 
         try:
+            # Stage 0: Fetch full article if needed
+            if content_item.url and not content_item.full_text:
+                logger.info(f"[{job_id}] Fetching full article...")
+                if progress_callback:
+                    progress_callback(5, "Fetching full article...")
+
+                full_text = await self.content_scraper.fetch_full_article(content_item.url)
+                if full_text:
+                    content_item.full_text = full_text
+                    logger.info(f"[{job_id}] Full article fetched ({len(full_text)} chars)")
+
             # Stage 1: Generate script
             logger.info(f"[{job_id}] Generating script...")
             if progress_callback:
                 progress_callback(10, "Generating script...")
 
+            # Use full article text if available, otherwise use description
+            content_for_script = content_item.full_text if content_item.full_text else content_item.description
+
             script = await self.script_generator.generate_script(
                 content_title=content_item.title,
-                content_description=content_item.description,
+                content_description=content_for_script,
                 style=style,
                 duration=duration
             )

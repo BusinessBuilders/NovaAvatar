@@ -26,6 +26,7 @@ class ContentItem(BaseModel):
     score: float = 0.0  # Trending/relevance score
     category: Optional[str] = None
     keywords: List[str] = Field(default_factory=list)
+    full_text: Optional[str] = None  # Full article content fetched from URL
 
     class Config:
         json_encoders = {
@@ -90,7 +91,33 @@ class ContentScraper:
             logger.warning("NewsAPI key not provided")
             self.newsapi = None
 
-    async def scrape_rss(self, max_items: int = 10) -> List[ContentItem]:
+    async def fetch_full_article(self, url: str) -> Optional[str]:
+        """Fetch full article content from URL using newspaper3k."""
+        try:
+            from newspaper import Article
+
+            logger.info(f"Fetching full article from: {url}")
+
+            # Download and parse article
+            article = Article(url)
+            article.download()
+            article.parse()
+
+            # Return the full text
+            full_text = article.text
+
+            if full_text and len(full_text) > 100:
+                logger.info(f"Successfully fetched article ({len(full_text)} chars)")
+                return full_text
+            else:
+                logger.warning(f"Article text too short or empty: {url}")
+                return None
+
+        except Exception as e:
+            logger.error(f"Error fetching article from {url}: {e}")
+            return None
+
+    async def scrape_rss(self, max_items: int = 10, search_term: Optional[str] = None) -> List[ContentItem]:
         """Scrape content from RSS feeds."""
         items = []
 
@@ -99,15 +126,24 @@ class ContentScraper:
                 logger.info(f"Scraping RSS feed: {feed_url}")
                 feed = feedparser.parse(feed_url)
 
-                for entry in feed.entries[:max_items]:
+                for entry in feed.entries[:max_items * 3]:  # Get more to filter
+                    title = entry.get('title', 'No title')
+                    description = entry.get('summary', entry.get('description', ''))
+
+                    # Filter by search term if provided
+                    if search_term:
+                        search_lower = search_term.lower()
+                        if search_lower not in title.lower() and search_lower not in description.lower():
+                            continue
+
                     # Extract published date
                     published_at = None
                     if hasattr(entry, 'published_parsed') and entry.published_parsed:
                         published_at = datetime(*entry.published_parsed[:6])
 
                     item = ContentItem(
-                        title=entry.get('title', 'No title'),
-                        description=entry.get('summary', entry.get('description', '')),
+                        title=title,
+                        description=description,
                         source='rss',
                         source_name=feed.feed.get('title', feed_url),
                         url=entry.get('link'),
@@ -115,6 +151,10 @@ class ContentScraper:
                         score=0.0,  # RSS doesn't provide scores
                     )
                     items.append(item)
+
+                    # Stop if we have enough items
+                    if len(items) >= max_items:
+                        break
 
             except Exception as e:
                 logger.error(f"Error scraping RSS feed {feed_url}: {e}")
@@ -126,7 +166,8 @@ class ContentScraper:
         self,
         subreddits: List[str] = None,
         time_filter: str = "day",
-        max_items: int = 10
+        max_items: int = 10,
+        search_term: Optional[str] = None
     ) -> List[ContentItem]:
         """Scrape trending posts from Reddit."""
         if not self.reddit:
@@ -232,25 +273,28 @@ class ContentScraper:
         self,
         max_items_per_source: int = 10,
         reddit_subreddits: Optional[List[str]] = None,
-        newsapi_category: str = 'general'
+        newsapi_category: str = 'general',
+        search_term: Optional[str] = None
     ) -> List[ContentItem]:
         """Scrape content from all available sources."""
         all_items = []
 
         # Scrape RSS
-        rss_items = await self.scrape_rss(max_items=max_items_per_source)
+        rss_items = await self.scrape_rss(max_items=max_items_per_source, search_term=search_term)
         all_items.extend(rss_items)
 
         # Scrape Reddit
         reddit_items = await self.scrape_reddit(
             subreddits=reddit_subreddits,
-            max_items=max_items_per_source
+            max_items=max_items_per_source,
+            search_term=search_term
         )
         all_items.extend(reddit_items)
 
-        # Scrape NewsAPI
+        # Scrape NewsAPI (use search_term as query)
         newsapi_items = await self.scrape_newsapi(
-            category=newsapi_category,
+            category=newsapi_category if not search_term else None,
+            query=search_term,
             max_items=max_items_per_source
         )
         all_items.extend(newsapi_items)

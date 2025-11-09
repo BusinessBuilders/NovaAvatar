@@ -124,6 +124,13 @@ class NovaAvatarApp:
         gr.Markdown("## Scrape Content from News & Social Media")
 
         with gr.Row():
+            search_term = gr.Textbox(
+                label="Search Term (optional)",
+                placeholder="e.g., AI, technology, climate change...",
+                value=""
+            )
+
+        with gr.Row():
             max_items = gr.Slider(
                 label="Max Items per Source",
                 minimum=1,
@@ -163,10 +170,14 @@ class NovaAvatarApp:
 
         generation_progress = gr.Textbox(label="Generation Progress", lines=3)
 
-        async def scrape_content(max_items_val):
+        async def scrape_content(search_term_val, max_items_val):
             try:
+                # Pass search_term if provided
+                search = search_term_val.strip() if search_term_val else None
+
                 self.scraped_items = await self.orchestrator.scrape_content(
-                    max_items=int(max_items_val)
+                    max_items=int(max_items_val),
+                    search_term=search
                 )
 
                 # Format for dataframe
@@ -179,7 +190,8 @@ class NovaAvatarApp:
                         item.description[:100] + "..."
                     ])
 
-                return f"✅ Scraped {len(self.scraped_items)} items", data
+                search_msg = f" for '{search}'" if search else ""
+                return f"✅ Scraped {len(self.scraped_items)} items{search_msg}", data
 
             except Exception as e:
                 logger.error(f"Scraping failed: {e}")
@@ -224,8 +236,8 @@ class NovaAvatarApp:
                 return f"❌ Error: {str(e)}"
 
         scrape_btn.click(
-            fn=lambda x: asyncio.run(scrape_content(x)),
-            inputs=[max_items],
+            fn=lambda s, m: asyncio.run(scrape_content(s, m)),
+            inputs=[search_term, max_items],
             outputs=[scrape_status, scraped_content]
         )
 
