@@ -171,6 +171,7 @@ class PipelineOrchestrator:
         content_item: ContentItem,
         style: ScriptStyle = ScriptStyle.PROFESSIONAL,
         duration: int = 45,
+        avatar_image: Optional[str] = None,
         progress_callback: Optional[Callable[[int, str], None]] = None
     ) -> VideoJob:
         """
@@ -269,9 +270,13 @@ class PipelineOrchestrator:
             # Build prompt from script title and scene
             video_prompt = f"{script.title}. {script.scene_description}"
 
+            # Use provided avatar image or default from env
+            import os
+            avatar_path = avatar_image if avatar_image else os.getenv("BASE_AVATAR_PATH", "examples/images/bill.png")
+
             video = await self.avatar_service.generate_video(
                 prompt=video_prompt,
-                image_path=background.image_path,
+                image_path=avatar_path,
                 audio_path=audio.audio_path,
                 output_name=f"video_{job_id}",
                 progress_callback=lambda p, s: progress_callback(

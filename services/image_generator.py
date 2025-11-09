@@ -108,17 +108,17 @@ class ImageGenerator:
 
             # Load pipeline if not already loaded
             if self.pipeline is None:
-                logger.info("Loading Flux Dev FP8 pipeline...")
+                logger.info("Loading Flux Dev pipeline...")
 
-                # Path to your Flux model
-                flux_path = os.getenv("FLUX_MODEL_PATH", "/home/magiccat/ComfyUI/models/checkpoints/FLUX1/flux1-dev-fp8.safetensors")
+                # Use the downloaded Flux model directory
+                flux_path = os.getenv("FLUX_MODEL_PATH", "./pretrained_models/FLUX.1-dev")
 
-                self.pipeline = FluxPipeline.from_single_file(
+                self.pipeline = FluxPipeline.from_pretrained(
                     flux_path,
                     torch_dtype=torch.bfloat16
                 )
                 self.pipeline.to("cuda")
-                logger.info("Flux Dev FP8 pipeline loaded")
+                logger.info("Flux Dev pipeline loaded")
 
             # Calculate dimensions from aspect ratio (Flux works best with these)
             if aspect_ratio == "16:9":

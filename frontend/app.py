@@ -169,6 +169,13 @@ class NovaAvatarApp:
                 )
 
         with gr.Row():
+            avatar_image = gr.Image(
+                label="Avatar Image",
+                type="filepath",
+                value="examples/images/bill.png"
+            )
+
+        with gr.Row():
             style_choice = gr.Dropdown(
                 label="Script Style",
                 choices=[s.value for s in ScriptStyle],
@@ -272,7 +279,7 @@ class NovaAvatarApp:
                 logger.error(f"Preview failed: {e}")
                 return f"❌ Error: {str(e)}", ""
 
-        async def generate_selected(dataframe_data, style, dur):
+        async def generate_selected(dataframe_data, style, dur, avatar_img):
             try:
                 # Get selected items
                 selected = []
@@ -285,6 +292,7 @@ class NovaAvatarApp:
 
                 # Generate videos
                 progress_text = f"Generating {len(selected)} videos...\n"
+                progress_text += f"Using avatar: {avatar_img}\n\n"
 
                 for i, item in enumerate(selected):
                     progress_text += f"\n[{i+1}/{len(selected)}] Processing: {item.title}\n"
@@ -297,6 +305,7 @@ class NovaAvatarApp:
                         item,
                         style=ScriptStyle(style),
                         duration=int(dur),
+                        avatar_image=avatar_img,
                         progress_callback=progress_callback
                     )
 
@@ -323,8 +332,8 @@ class NovaAvatarApp:
         )
 
         generate_btn.click(
-            fn=lambda d, s, dur: asyncio.run(generate_selected(d, s, dur)),
-            inputs=[scraped_content, style_choice, duration],
+            fn=lambda d, s, dur, av: asyncio.run(generate_selected(d, s, dur, av)),
+            inputs=[scraped_content, style_choice, duration, avatar_image],
             outputs=[generation_progress]
         )
 
