@@ -144,8 +144,8 @@ class NovaAvatarApp:
         scrape_status = gr.Textbox(label="Status", lines=2)
 
         scraped_content = gr.Dataframe(
-            headers=["Select", "Title", "Source", "Description"],
-            datatype=["bool", "str", "str", "str"],
+            headers=["Select", "Title", "Source", "Content", "Description"],
+            datatype=["bool", "str", "str", "str", "str"],
             label="Scraped Content",
             interactive=True,
             wrap=True
@@ -212,16 +212,26 @@ class NovaAvatarApp:
 
                 # Format for dataframe
                 data = []
+                full_text_count = 0
                 for item in self.scraped_items:
+                    # Add indicator for full text availability
+                    has_full_text = item.full_text and len(item.full_text) > 100
+                    if has_full_text:
+                        full_text_count += 1
+                        status = "✓ Full"
+                    else:
+                        status = "⚠️ Desc"
+
                     data.append([
                         False,  # checkbox
                         item.title,
                         item.source_name,
+                        status,
                         item.description[:100] + "..."
                     ])
 
                 search_msg = f" for '{search}'" if search else ""
-                return f"✅ Scraped {len(self.scraped_items)} items{search_msg}", data
+                return f"✅ Scraped {len(self.scraped_items)} items{search_msg} ({full_text_count} full articles)", data
 
             except Exception as e:
                 logger.error(f"Scraping failed: {e}")

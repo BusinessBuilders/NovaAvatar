@@ -297,9 +297,27 @@ class ImageGenerator:
             logger.info("Cleaning up image generation pipeline...")
             try:
                 import torch
+                import gc
+
+                # Move to CPU first to release GPU memory
+                try:
+                    self.pipeline.to("cpu")
+                except:
+                    pass
+
+                # Delete pipeline
                 del self.pipeline
                 self.pipeline = None
+
+                # Force garbage collection
+                gc.collect()
+
+                # Empty CUDA cache
                 torch.cuda.empty_cache()
+
+                # Force synchronize to ensure cleanup is complete
+                torch.cuda.synchronize()
+
                 logger.info("Image pipeline unloaded, VRAM freed")
             except Exception as e:
                 logger.warning(f"Error during cleanup: {e}")

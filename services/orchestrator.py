@@ -153,7 +153,7 @@ class PipelineOrchestrator:
         sources: Optional[List[str]] = None,
         search_term: Optional[str] = None
     ) -> List[ContentItem]:
-        """Scrape content from configured sources."""
+        """Scrape content from configured sources and fetch full articles."""
 
         if search_term:
             logger.info(f"Scraping content for '{search_term}' (max {max_items} items)...")
@@ -166,6 +166,22 @@ class PipelineOrchestrator:
         )
 
         logger.info(f"Scraped {len(items)} content items")
+
+        # Fetch full article text for each item with a URL
+        logger.info("Fetching full article text for all items...")
+        fetched_count = 0
+        for i, item in enumerate(items):
+            if item.url and not item.full_text:
+                logger.info(f"[{i+1}/{len(items)}] Fetching: {item.title[:50]}...")
+                full_text = await self.content_scraper.fetch_full_article(item.url)
+                if full_text:
+                    item.full_text = full_text
+                    fetched_count += 1
+                    logger.info(f"  ✓ Fetched ({len(full_text)} chars)")
+                else:
+                    logger.warning(f"  ✗ Failed to fetch, using description")
+
+        logger.info(f"Successfully fetched {fetched_count}/{len(items)} full articles")
         return items
 
     async def create_video_from_content(
@@ -248,6 +264,11 @@ class PipelineOrchestrator:
                 scene_description=bg_description,
                 style="photorealistic"
             )
+
+            # CRITICAL: Cleanup Flux from VRAM before continuing
+            logger.info(f"[{job_id}] Cleaning up image generation pipeline...")
+            self.image_generator.cleanup()
+            logger.info(f"[{job_id}] Image pipeline cleaned up")
 
             job.background_image = background.image_path
             job.status = JobStatus.GENERATING_AUDIO
