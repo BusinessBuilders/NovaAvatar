@@ -86,20 +86,32 @@ class AvatarService:
         try:
             logger.info("Loading OmniAvatar pipeline...")
 
-            # Import here to avoid loading models at import time
-            from scripts.inference import WanInferencePipeline
-            from OmniAvatar.utils.args_config import load_config_from_yaml
+            # Import directly from OmniAvatar to avoid scripts/inference.py parse_args() issue
+            from OmniAvatar.wan_video import WanVideoPipeline
+            import yaml
+            import argparse
 
-            # Load config
-            self.config = load_config_from_yaml(self.config_path)
+            # Load config YAML manually
+            with open(self.config_path, 'r') as f:
+                yaml_config = yaml.safe_load(f)
+
+            # Create a Namespace object from YAML config
+            self.config = argparse.Namespace(**yaml_config)
+
+            # Set required distributed training variables
+            import os
+            self.config.rank = 0
+            self.config.world_size = 1
+            self.config.local_rank = 0
+            self.config.device = 'cuda:0'
+            self.config.num_nodes = 1
 
             # Override with our parameters
             for key, value in self.params.items():
-                if hasattr(self.config, key):
-                    setattr(self.config, key, value)
+                setattr(self.config, key, value)
 
             # Initialize pipeline
-            self.pipeline = WanInferencePipeline(self.config)
+            self.pipeline = WanVideoPipeline(self.config)
 
             logger.info("Pipeline loaded successfully")
 
@@ -129,10 +141,6 @@ class AvatarService:
             AvatarVideo with path and metadata
         """
 
-        # Ensure pipeline is loaded
-        if self.pipeline is None:
-            self.load_pipeline()
-
         # Validate inputs
         if not Path(image_path).exists():
             raise FileNotFoundError(f"Image not found: {image_path}")
@@ -145,7 +153,7 @@ class AvatarService:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             output_name = f"avatar_{timestamp}"
 
-        output_base = self.output_dir / output_name
+        output_path = self.output_dir / f"{output_name}.mp4"
 
         try:
             logger.info(f"Generating avatar video: {output_name}")
@@ -156,39 +164,58 @@ class AvatarService:
             if progress_callback:
                 progress_callback(0, "Initializing...")
 
-            # Create input string in OmniAvatar format
+            # Create input file for OmniAvatar
             input_line = f"{prompt}@@{image_path}@@{audio_path}"
+            input_file = self.output_dir / f"{output_name}_input.txt"
+            with open(input_file, 'w') as f:
+                f.write(input_line)
 
-            # Run generation
             if progress_callback:
-                progress_callback(10, "Loading models...")
+                progress_callback(10, "Generating video with OmniAvatar...")
 
-            # Note: The actual WanInferencePipeline.forward() method
-            # We'll need to adapt it to work with our wrapper
-            import torch
+            # Run OmniAvatar inference using torchrun
+            import subprocess
+            import os
 
-            with torch.no_grad():
-                if progress_callback:
-                    progress_callback(20, "Processing audio...")
+            # Get config path (already set in init)
+            cmd = [
+                'torchrun',
+                '--standalone',
+                '--nproc_per_node=1',
+                'scripts/inference.py',
+                '--config', self.config_path,
+                '--input_file', str(input_file),
+                '--hp', f'num_steps={self.params["num_steps"]},guidance_scale={self.params["guidance_scale"]},audio_scale={self.params["audio_scale"]},tea_cache_l1_thresh={self.params["tea_cache_l1_thresh"]}'
+            ]
 
-                # Call the pipeline
-                # The actual implementation depends on WanInferencePipeline interface
-                # This is a simplified version - actual integration may differ
-                result = self.pipeline.forward(
-                    input_line=input_line,
-                    output_base=str(output_base),
-                    rank=0,  # Single GPU for now
-                    callback=lambda p: progress_callback(20 + int(p * 0.7), "Generating video...") if progress_callback else None
-                )
+            logger.info(f"Running: {' '.join(cmd)}")
 
-                if progress_callback:
-                    progress_callback(95, "Saving video...")
+            # Run the command
+            result = subprocess.run(
+                cmd,
+                cwd=os.getcwd(),
+                capture_output=True,
+                text=True
+            )
+
+            if result.returncode != 0:
+                logger.error(f"OmniAvatar failed: {result.stderr}")
+                raise RuntimeError(f"OmniAvatar generation failed: {result.stderr}")
+
+            if progress_callback:
+                progress_callback(95, "Finding generated video...")
 
             # Find the generated video file
-            video_path = self._find_output_video(output_base)
+            video_path = self._find_output_video_in_demo_out(output_name, input_line)
 
             if not video_path:
                 raise RuntimeError("Video generation completed but output file not found")
+
+            # Copy to our output directory
+            import shutil
+            final_path = self.output_dir / f"{output_name}.mp4"
+            shutil.copy(video_path, final_path)
+            video_path = str(final_path)
 
             if progress_callback:
                 progress_callback(100, "Complete!")
@@ -216,6 +243,31 @@ class AvatarService:
             if progress_callback:
                 progress_callback(-1, f"Error: {str(e)}")
             raise
+
+    def _find_output_video_in_demo_out(self, output_name: str, input_line: str) -> Optional[str]:
+        """Find the generated video in demo_out directory."""
+
+        # OmniAvatar saves to demo_out/{exp_name}/res_...
+        demo_out = Path("demo_out")
+
+        if not demo_out.exists():
+            logger.warning("demo_out directory not found")
+            return None
+
+        # Search for the most recent result_*.mp4 file
+        import glob
+        video_files = sorted(
+            glob.glob(str(demo_out / "**" / "result_*.mp4"), recursive=True),
+            key=lambda x: Path(x).stat().st_mtime,
+            reverse=True
+        )
+
+        if video_files:
+            logger.info(f"Found generated video: {video_files[0]}")
+            return video_files[0]
+
+        logger.warning("No video files found in demo_out")
+        return None
 
     def _find_output_video(self, output_base: Path) -> Optional[str]:
         """Find the generated video file."""

@@ -152,7 +152,7 @@ class NovaAvatarApp:
         )
 
         # Preview section
-        preview_btn = gr.Button("📄 Preview Selected Article & Script", variant="secondary")
+        preview_btn = gr.Button("📄 Preview Article, Script & Background", variant="secondary")
 
         with gr.Row():
             with gr.Column():
@@ -167,17 +167,33 @@ class NovaAvatarApp:
                     lines=10,
                     placeholder="GPT-4 script will appear here..."
                 )
+            with gr.Column():
+                background_preview = gr.Image(
+                    label="Generated Background Preview",
+                    type="filepath"
+                )
 
         with gr.Row():
             avatar_image = gr.Image(
-                label="Avatar Image",
+                label="Avatar/Composite Image",
                 type="filepath",
                 value="examples/images/bill.png"
             )
+            use_flux = gr.Checkbox(
+                label="Generate Background with Flux Dev (CPU offload enabled for 24GB GPUs)",
+                value=True,
+                info="If enabled: auto-generates background (slower due to CPU offload). If disabled: upload your own image"
+            )
 
         background_prompt = gr.Textbox(
-            label="Background Prompt (optional - auto-generated from article if empty)",
+            label="Background Prompt (for Flux generation - auto-generated from article if empty)",
             placeholder="e.g., modern office with large windows, city skyline, sunset lighting...",
+            lines=2
+        )
+
+        avatar_prompt = gr.Textbox(
+            label="Avatar Animation Prompt (for OmniAvatar - auto-generated from article if empty)",
+            placeholder="e.g., A professional presenter speaking confidently with subtle hand gestures, medium shot...",
             lines=2
         )
 
@@ -237,19 +253,27 @@ class NovaAvatarApp:
                 logger.error(f"Scraping failed: {e}")
                 return f"❌ Error: {str(e)}", []
 
-        async def preview_article(dataframe_data, style, dur):
+        async def preview_article(dataframe_data, style, dur, bg_prompt, use_flux_val):
             try:
+                # Validate scraped items exist
+                if not self.scraped_items:
+                    return "⚠️ Please scrape content first", "", None
+
                 # Get selected items
                 selected = []
                 for i, row in enumerate(dataframe_data):
+                    if i >= len(self.scraped_items):
+                        logger.warning(f"Row index {i} exceeds scraped_items length {len(self.scraped_items)}")
+                        continue
                     if row[0]:  # checkbox is True
                         selected.append(self.scraped_items[i])
 
                 if not selected:
-                    return "⚠️ No items selected", ""
+                    return "⚠️ No items selected", "", None
 
                 # Preview first selected item only
                 item = selected[0]
+                logger.info(f"Previewing: {item.title}")
 
                 # Fetch full article
                 article_text = "Fetching article...\n\n"
@@ -289,20 +313,49 @@ class NovaAvatarApp:
                 script_text += f"Target Duration: {dur}s\n\n"
                 script_text += "--- Script ---\n\n"
                 script_text += script.script
-                script_text += f"\n\n--- Scene Description ---\n\n"
+                script_text += f"\n\n--- Scene Description (for Flux) ---\n\n"
                 script_text += script.scene_description
+                script_text += f"\n\n--- Avatar Prompt (for OmniAvatar) ---\n\n"
+                script_text += script.avatar_prompt
 
-                return article_text, script_text
+                # Generate background preview (only if Flux enabled)
+                background_path = None
+                if use_flux_val:
+                    bg_description = bg_prompt if bg_prompt else script.scene_description
+                    logger.info(f"Generating background preview: {bg_description[:100]}...")
+
+                    background = await self.orchestrator.image_generator.generate_background(
+                        scene_description=bg_description,
+                        style="photorealistic"
+                    )
+
+                    # Cleanup Flux immediately after generation
+                    self.orchestrator.image_generator.cleanup()
+
+                    background_path = background.image_path
+                    logger.info(f"Background preview generated: {background_path}")
+                else:
+                    logger.info("Flux disabled, skip background generation in preview")
+
+                # Return avatar_prompt as 4th value so it can populate the textbox
+                return article_text, script_text, background_path, script.avatar_prompt
 
             except Exception as e:
                 logger.error(f"Preview failed: {e}")
-                return f"❌ Error: {str(e)}", ""
+                return f"❌ Error: {str(e)}", "", None, ""
 
-        async def generate_selected(dataframe_data, style, dur, avatar_img, bg_prompt):
+        async def generate_selected(dataframe_data, style, dur, avatar_img, bg_prompt, av_prompt, use_flux_val):
             try:
+                # Validate scraped items exist
+                if not self.scraped_items:
+                    return "⚠️ Please scrape content first"
+
                 # Get selected items
                 selected = []
                 for i, row in enumerate(dataframe_data):
+                    if i >= len(self.scraped_items):
+                        logger.warning(f"Row index {i} exceeds scraped_items length {len(self.scraped_items)}")
+                        continue
                     if row[0]:  # checkbox is True
                         selected.append(self.scraped_items[i])
 
@@ -311,11 +364,15 @@ class NovaAvatarApp:
 
                 # Generate videos
                 progress_text = f"Generating {len(selected)} videos...\n"
-                progress_text += f"Using avatar: {avatar_img}\n"
-                if bg_prompt:
-                    progress_text += f"Background: {bg_prompt}\n\n"
+                progress_text += f"Image: {avatar_img}\n"
+
+                if use_flux_val:
+                    if bg_prompt:
+                        progress_text += f"Mode: Flux with custom prompt + compositing\n\n"
+                    else:
+                        progress_text += "Mode: Flux auto-generated + compositing\n\n"
                 else:
-                    progress_text += "Background: Auto-generated from article\n\n"
+                    progress_text += "Mode: Using image as-is (no Flux/compositing)\n\n"
 
                 for i, item in enumerate(selected):
                     progress_text += f"\n[{i+1}/{len(selected)}] Processing: {item.title}\n"
@@ -330,6 +387,8 @@ class NovaAvatarApp:
                         duration=int(dur),
                         avatar_image=avatar_img,
                         background_prompt=bg_prompt if bg_prompt else None,
+                        avatar_prompt=av_prompt if av_prompt else None,
+                        use_flux=use_flux_val,
                         progress_callback=progress_callback
                     )
 
@@ -350,14 +409,14 @@ class NovaAvatarApp:
         )
 
         preview_btn.click(
-            fn=lambda d, s, dur: asyncio.run(preview_article(d, s, dur)),
-            inputs=[scraped_content, style_choice, duration],
-            outputs=[article_preview, script_preview]
+            fn=lambda d, s, dur, bg, uf: asyncio.run(preview_article(d, s, dur, bg, uf)),
+            inputs=[scraped_content, style_choice, duration, background_prompt, use_flux],
+            outputs=[article_preview, script_preview, background_preview, avatar_prompt]
         )
 
         generate_btn.click(
-            fn=lambda d, s, dur, av, bg: asyncio.run(generate_selected(d, s, dur, av, bg)),
-            inputs=[scraped_content, style_choice, duration, avatar_image, background_prompt],
+            fn=lambda d, s, dur, av, bg, ap, uf: asyncio.run(generate_selected(d, s, dur, av, bg, ap, uf)),
+            inputs=[scraped_content, style_choice, duration, avatar_image, background_prompt, avatar_prompt, use_flux],
             outputs=[generation_progress]
         )
 

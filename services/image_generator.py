@@ -31,7 +31,8 @@ class ImageGenerator:
         api_key: Optional[str] = None,
         model: str = "black-forest-labs/flux-schnell",
         output_dir: str = "storage/generated",
-        use_local: bool = True  # Use local SD by default
+        use_local: bool = True,  # Use local SD by default
+        use_schnell: bool = True  # Use Schnell instead of Dev for lower VRAM
     ):
         """
         Initialize image generator.
@@ -106,6 +107,14 @@ class ImageGenerator:
             from diffusers import FluxPipeline
             import torch
 
+            # Monkey patch for PyTorch 2.4 compatibility (enable_gqa not available)
+            original_sdpa = torch.nn.functional.scaled_dot_product_attention
+            def patched_sdpa(*args, **kwargs):
+                # Remove enable_gqa if present (requires PyTorch 2.5+)
+                kwargs.pop('enable_gqa', None)
+                return original_sdpa(*args, **kwargs)
+            torch.nn.functional.scaled_dot_product_attention = patched_sdpa
+
             # Load pipeline if not already loaded
             if self.pipeline is None:
                 logger.info("Loading Flux Dev pipeline...")
@@ -117,8 +126,15 @@ class ImageGenerator:
                     flux_path,
                     torch_dtype=torch.bfloat16
                 )
-                self.pipeline.to("cuda")
-                logger.info("Flux Dev pipeline loaded")
+
+                # Enable CPU offloading to fit in 24GB VRAM
+                logger.info("Enabling model CPU offload for 24GB VRAM compatibility...")
+                self.pipeline.enable_model_cpu_offload()
+
+                # Additional VRAM optimizations
+                self.pipeline.enable_attention_slicing()
+
+                logger.info("Flux Dev pipeline loaded with CPU offload (24GB VRAM mode)")
 
             # Calculate dimensions from aspect ratio (Flux works best with these)
             if aspect_ratio == "16:9":
@@ -154,6 +170,9 @@ class ImageGenerator:
             # Cleanup VRAM
             self.cleanup()
 
+            # Restore original scaled_dot_product_attention
+            torch.nn.functional.scaled_dot_product_attention = original_sdpa
+
             return GeneratedImage(
                 image_path=str(image_path),
                 prompt=prompt,
@@ -167,6 +186,11 @@ class ImageGenerator:
 
         except Exception as e:
             logger.error(f"Error generating image locally: {e}")
+            # Restore original function if it exists
+            try:
+                torch.nn.functional.scaled_dot_product_attention = original_sdpa
+            except:
+                pass
             raise
 
     async def _generate_replicate(

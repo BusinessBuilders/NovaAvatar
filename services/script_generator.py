@@ -27,7 +27,8 @@ class VideoScript(BaseModel):
     title: str
     duration_estimate: int  # in seconds
     style: ScriptStyle
-    scene_description: str  # For image generation
+    scene_description: str  # For Flux background image generation
+    avatar_prompt: str  # For OmniAvatar animation behavior
     keywords: List[str] = Field(default_factory=list)
     metadata: Dict = Field(default_factory=dict)
 
@@ -106,10 +107,16 @@ class ScriptGenerator:
             # Extract the script
             script_text = response.choices[0].message.content.strip()
 
-            # Extract scene description using another GPT call
+            # Extract scene description using another GPT call (for Flux background)
             scene_description = await self._generate_scene_description(
                 content_title,
                 content_description,
+                style
+            )
+
+            # Generate avatar action prompt (for OmniAvatar animation)
+            avatar_prompt = await self._generate_avatar_prompt(
+                content_title,
                 style
             )
 
@@ -126,6 +133,7 @@ class ScriptGenerator:
                 duration_estimate=duration_estimate,
                 style=style,
                 scene_description=scene_description,
+                avatar_prompt=avatar_prompt,
                 keywords=keywords,
                 metadata={
                     "model": self.model,
@@ -263,6 +271,45 @@ Your scene description:"""
         except Exception as e:
             logger.warning(f"Error generating scene description: {e}")
             return "A professional studio setting with neutral background"
+
+    async def _generate_avatar_prompt(
+        self,
+        title: str,
+        style: ScriptStyle
+    ) -> str:
+        """Generate an avatar action prompt for OmniAvatar animation."""
+
+        try:
+            response = self.client.chat.completions.create(
+                model="gpt-4-turbo-preview",
+                messages=[{
+                    "role": "user",
+                    "content": f"""Create a short prompt for avatar animation behavior (for OmniAvatar).
+
+Topic: {title}
+Style: {style.value}
+
+Describe HOW the avatar should speak and move, NOT the background scene.
+Focus on: speaking style, gestures, camera framing, body language.
+
+Examples:
+- "A professional presenter speaking confidently to camera with subtle hand gestures, medium shot, stable framing"
+- "A casual speaker talking naturally with expressive hands, looking directly at camera, medium close-up"
+- "A news anchor delivering information authoritatively, minimal movement, professional composure, chest-up framing"
+
+Keep it to 1 sentence. Focus on avatar behavior only.
+
+Your avatar prompt:"""
+                }],
+                temperature=0.7,
+                max_tokens=100
+            )
+
+            return response.choices[0].message.content.strip()
+
+        except Exception as e:
+            logger.warning(f"Error generating avatar prompt: {e}")
+            return "A person speaking naturally and professionally to the camera with subtle gestures, medium shot"
 
     async def _extract_keywords(self, title: str, description: str) -> List[str]:
         """Extract relevant keywords from content."""

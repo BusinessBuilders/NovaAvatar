@@ -191,6 +191,8 @@ class PipelineOrchestrator:
         duration: int = 45,
         avatar_image: Optional[str] = None,
         background_prompt: Optional[str] = None,
+        avatar_prompt: Optional[str] = None,
+        use_flux: bool = True,
         progress_callback: Optional[Callable[[int, str], None]] = None
     ) -> VideoJob:
         """
@@ -251,26 +253,34 @@ class PipelineOrchestrator:
             job.progress = 30
             self._save_jobs()
 
-            # Stage 2: Generate background image
-            logger.info(f"[{job_id}] Generating background image...")
-            if progress_callback:
-                progress_callback(30, "Generating background...")
+            # Stage 2: Generate background image (only if Flux enabled)
+            import os
+            avatar_path = avatar_image if avatar_image else os.getenv("BASE_AVATAR_PATH", "examples/images/bill.png")
 
-            # Use custom background prompt if provided, otherwise use GPT-4 scene description
-            bg_description = background_prompt if background_prompt else script.scene_description
-            logger.info(f"[{job_id}] Background: {bg_description[:100]}...")
+            if use_flux:
+                logger.info(f"[{job_id}] Flux enabled - Generating background image...")
+                if progress_callback:
+                    progress_callback(30, "Generating background...")
 
-            background = await self.image_generator.generate_background(
-                scene_description=bg_description,
-                style="photorealistic"
-            )
+                # Use custom background prompt if provided, otherwise use GPT-4 scene description
+                bg_description = background_prompt if background_prompt else script.scene_description
+                logger.info(f"[{job_id}] Background: {bg_description[:100]}...")
 
-            # CRITICAL: Cleanup Flux from VRAM before continuing
-            logger.info(f"[{job_id}] Cleaning up image generation pipeline...")
-            self.image_generator.cleanup()
-            logger.info(f"[{job_id}] Image pipeline cleaned up")
+                background = await self.image_generator.generate_background(
+                    scene_description=bg_description,
+                    style="photorealistic"
+                )
 
-            job.background_image = background.image_path
+                # CRITICAL: Cleanup Flux from VRAM before continuing
+                logger.info(f"[{job_id}] Cleaning up image generation pipeline...")
+                self.image_generator.cleanup()
+                logger.info(f"[{job_id}] Image pipeline cleaned up")
+
+                job.background_image = background.image_path
+            else:
+                logger.info(f"[{job_id}] Flux disabled - Skipping background generation")
+                job.background_image = None
+
             job.status = JobStatus.GENERATING_AUDIO
             job.progress = 50
             self._save_jobs()
@@ -290,27 +300,23 @@ class PipelineOrchestrator:
             job.progress = 60
             self._save_jobs()
 
-            # Stage 3.5: Composite avatar onto background
-            import os
-            avatar_path = avatar_image if avatar_image else os.getenv("BASE_AVATAR_PATH", "examples/images/bill.png")
-            use_compositing = os.getenv("USE_AVATAR_COMPOSITING", "true").lower() == "true"
-
-            if use_compositing:
+            # Stage 3.5: Composite avatar onto background (only if Flux enabled)
+            if use_flux and job.background_image:
                 logger.info(f"[{job_id}] Compositing avatar onto background...")
                 if progress_callback:
                     progress_callback(60, "Compositing avatar onto background...")
 
-                composite = await self.image_compositor.composite_avatar(
+                composite = self.image_compositor.composite_avatar_on_background(
                     avatar_path=avatar_path,
-                    background_path=background.image_path,
-                    output_name=f"composite_{job_id}.png"
+                    background_path=job.background_image,
+                    output_name=f"composite_{job_id}.jpg"
                 )
-                final_image_path = composite.composite_path
+                final_image_path = composite.image_path
                 logger.info(f"[{job_id}] Composite created: {final_image_path}")
             else:
-                # Use avatar directly without compositing
+                # Use avatar/composite image directly
                 final_image_path = avatar_path
-                logger.info(f"[{job_id}] Using avatar directly: {final_image_path}")
+                logger.info(f"[{job_id}] Using image as-is: {final_image_path}")
 
             job.progress = 70
             self._save_jobs()
@@ -320,8 +326,12 @@ class PipelineOrchestrator:
             if progress_callback:
                 progress_callback(70, "Generating avatar video...")
 
-            # Build prompt from script title and scene
-            video_prompt = f"{script.title}. {script.scene_description}"
+            # Use avatar_prompt for OmniAvatar (describes avatar behavior, not scene)
+            # The scene is already in the composited image, so we just need animation behavior
+            # Use custom avatar_prompt if provided, otherwise use GPT-generated one
+            video_prompt = avatar_prompt if avatar_prompt else script.avatar_prompt
+
+            logger.info(f"[{job_id}] Avatar prompt: {video_prompt}")
 
             video = await self.avatar_service.generate_video(
                 prompt=video_prompt,

@@ -63,6 +63,9 @@ class ImageCompositor:
             avatar = Image.open(avatar_path).convert("RGBA")
             background = Image.open(background_path).convert("RGBA")
 
+            # Remove background from avatar if it's not transparent
+            avatar = self._remove_background(avatar)
+
             # Resize avatar if needed
             if avatar_scale != 1.0:
                 new_size = (
@@ -130,6 +133,78 @@ class ImageCompositor:
         except Exception as e:
             logger.error(f"Error compositing images: {e}")
             raise
+
+    def _remove_background(self, avatar: Image.Image) -> Image.Image:
+        """
+        Remove background from avatar image using rembg.
+
+        Args:
+            avatar: PIL Image in RGBA format
+
+        Returns:
+            PIL Image with background removed
+        """
+        try:
+            from rembg import remove
+            import io
+
+            logger.info("Removing background from avatar...")
+
+            # Convert to bytes
+            img_byte_arr = io.BytesIO()
+            avatar.save(img_byte_arr, format='PNG')
+            img_byte_arr = img_byte_arr.getvalue()
+
+            # Remove background
+            output = remove(img_byte_arr)
+
+            # Convert back to PIL Image
+            result = Image.open(io.BytesIO(output)).convert("RGBA")
+
+            logger.info("Background removed successfully")
+            return result
+
+        except ImportError:
+            logger.warning("rembg not installed, using simple background removal fallback")
+            return self._simple_background_removal(avatar)
+        except Exception as e:
+            logger.warning(f"Background removal failed: {e}, using fallback")
+            return self._simple_background_removal(avatar)
+
+    def _simple_background_removal(self, avatar: Image.Image) -> Image.Image:
+        """
+        Simple background removal for solid dark backgrounds.
+
+        Args:
+            avatar: PIL Image in RGBA format
+
+        Returns:
+            PIL Image with dark background made transparent
+        """
+        logger.info("Using simple background removal for dark backgrounds...")
+
+        import numpy as np
+
+        # Convert to numpy array
+        data = np.array(avatar)
+
+        # Get RGB channels
+        r, g, b, a = data[:,:,0], data[:,:,1], data[:,:,2], data[:,:,3]
+
+        # Create mask for dark pixels (near black)
+        # Consider pixels as background if they're dark (< 30 in all channels)
+        dark_mask = (r < 30) & (g < 30) & (b < 30)
+
+        # Set alpha to 0 for dark pixels
+        a[dark_mask] = 0
+
+        # Reconstruct image
+        data[:,:,3] = a
+
+        result = Image.fromarray(data, 'RGBA')
+        logger.info("Simple background removal complete")
+
+        return result
 
     def prepare_avatar(
         self,
