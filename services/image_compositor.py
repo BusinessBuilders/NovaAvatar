@@ -40,7 +40,8 @@ class ImageCompositor:
         background_path: str,
         output_name: Optional[str] = None,
         avatar_scale: float = 1.0,
-        position: str = "center"  # "center", "left", "right"
+        position: str = "center",  # "center", "left", "right"
+        skip_background_removal: bool = False  # Skip background removal entirely
     ) -> CompositedImage:
         """
         Composite transparent avatar onto background.
@@ -58,13 +59,35 @@ class ImageCompositor:
 
         try:
             logger.info(f"Compositing avatar onto background...")
+            logger.info(f"Avatar: {avatar_path}")
+            logger.info(f"Background: {background_path}")
 
             # Load images
             avatar = Image.open(avatar_path).convert("RGBA")
             background = Image.open(background_path).convert("RGBA")
 
-            # Remove background from avatar if it's not transparent
-            avatar = self._remove_background(avatar)
+            # Check if we should skip background removal
+            if skip_background_removal:
+                logger.info("⚠️ Background removal DISABLED by parameter")
+            else:
+                # Check if avatar already has transparency
+                import numpy as np
+                avatar_data = np.array(avatar)
+                has_transparency = np.any(avatar_data[:,:,3] < 255)
+
+                # Count transparent pixels for better diagnostics
+                transparent_pixels = np.sum(avatar_data[:,:,3] < 255)
+                total_pixels = avatar_data.shape[0] * avatar_data.shape[1]
+                transparency_pct = (transparent_pixels / total_pixels) * 100
+
+                logger.info(f"Transparency check: {transparent_pixels}/{total_pixels} pixels transparent ({transparency_pct:.1f}%)")
+
+                if has_transparency:
+                    logger.info("✓ Avatar already has transparency, skipping background removal")
+                else:
+                    logger.info("⚠️ Avatar has no transparency, attempting background removal")
+                    # Remove background from avatar if it's not transparent
+                    avatar = self._remove_background(avatar)
 
             # Resize avatar if needed
             if avatar_scale != 1.0:
@@ -191,9 +214,10 @@ class ImageCompositor:
         # Get RGB channels
         r, g, b, a = data[:,:,0], data[:,:,1], data[:,:,2], data[:,:,3]
 
-        # Create mask for dark pixels (near black)
-        # Consider pixels as background if they're dark (< 30 in all channels)
-        dark_mask = (r < 30) & (g < 30) & (b < 30)
+        # Create mask for true black pixels only (very conservative)
+        # Only remove pixels that are near-black (< 10 in all channels)
+        # This prevents removing dark hair, clothing, or shadows from avatars
+        dark_mask = (r < 10) & (g < 10) & (b < 10)
 
         # Set alpha to 0 for dark pixels
         a[dark_mask] = 0

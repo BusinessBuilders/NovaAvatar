@@ -255,7 +255,7 @@ class PipelineOrchestrator:
 
             # Stage 2: Generate background image (only if Flux enabled)
             import os
-            avatar_path = avatar_image if avatar_image else os.getenv("BASE_AVATAR_PATH", "examples/images/bill.png")
+            avatar_path = avatar_image if avatar_image else os.getenv("BASE_AVATAR_PATH", "examples/images/bill_clean.png")
 
             if use_flux:
                 logger.info(f"[{job_id}] Flux enabled - Generating background image...")
@@ -309,7 +309,8 @@ class PipelineOrchestrator:
                 composite = self.image_compositor.composite_avatar_on_background(
                     avatar_path=avatar_path,
                     background_path=job.background_image,
-                    output_name=f"composite_{job_id}.jpg"
+                    output_name=f"composite_{job_id}.jpg",
+                    skip_background_removal=True  # User has transparent avatar already
                 )
                 final_image_path = composite.image_path
                 logger.info(f"[{job_id}] Composite created: {final_image_path}")

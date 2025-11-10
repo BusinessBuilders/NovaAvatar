@@ -5,6 +5,7 @@ Production-ready web UI for automated avatar video generation.
 
 import os
 import sys
+import json
 from pathlib import Path
 import asyncio
 from typing import List, Tuple, Optional
@@ -31,10 +32,57 @@ class NovaAvatarApp:
         """Initialize the application."""
 
         self.orchestrator = PipelineOrchestrator()
+        self.scraped_items_file = Path("storage/scraped_items.json")
         self.scraped_items = []
         self.selected_items = []
 
+        # Load previously scraped items if they exist
+        self._load_scraped_items()
+
         logger.info("NovaAvatar app initialized")
+
+    def _save_scraped_items(self):
+        """Save scraped items to disk."""
+        try:
+            self.scraped_items_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.scraped_items_file, 'w') as f:
+                # Convert ContentItem objects to dicts
+                items_data = [item.dict() for item in self.scraped_items]
+                json.dump(items_data, f, indent=2, default=str)
+            logger.info(f"Saved {len(self.scraped_items)} scraped items to {self.scraped_items_file}")
+        except Exception as e:
+            logger.error(f"Error saving scraped items: {e}")
+
+    def _load_scraped_items(self):
+        """Load scraped items from disk."""
+        try:
+            if self.scraped_items_file.exists():
+                with open(self.scraped_items_file, 'r') as f:
+                    items_data = json.load(f)
+                # Convert dicts back to ContentItem objects
+                from services.content_scraper import ContentItem
+                self.scraped_items = [ContentItem(**item) for item in items_data]
+                logger.info(f"Loaded {len(self.scraped_items)} scraped items from {self.scraped_items_file}")
+            else:
+                logger.info("No saved scraped items found")
+        except Exception as e:
+            logger.error(f"Error loading scraped items: {e}")
+            self.scraped_items = []
+
+    def _format_items_for_dataframe(self):
+        """Format scraped items for dataframe display."""
+        data = []
+        for item in self.scraped_items:
+            has_full_text = item.full_text and len(item.full_text) > 100
+            status = "✓ Full" if has_full_text else "⚠️ Desc"
+            data.append([
+                False,  # checkbox
+                item.title,
+                item.source_name,
+                status,
+                item.description[:100] + "..." if item.description else ""
+            ])
+        return data
 
     def build_interface(self) -> gr.Blocks:
         """Build the Gradio interface."""
@@ -141,14 +189,22 @@ class NovaAvatarApp:
 
         scrape_btn = gr.Button("🔍 Scrape Content", variant="primary")
 
-        scrape_status = gr.Textbox(label="Status", lines=2)
+        # Show initial status with loaded items count
+        initial_status = ""
+        if len(self.scraped_items) > 0:
+            full_text_count = sum(1 for item in self.scraped_items
+                                 if item.full_text and len(item.full_text) > 100)
+            initial_status = f"📚 Loaded {len(self.scraped_items)} saved articles ({full_text_count} full articles)"
+
+        scrape_status = gr.Textbox(label="Status", lines=2, value=initial_status)
 
         scraped_content = gr.Dataframe(
             headers=["Select", "Title", "Source", "Content", "Description"],
             datatype=["bool", "str", "str", "str", "str"],
             label="Scraped Content",
             interactive=True,
-            wrap=True
+            wrap=True,
+            value=self._format_items_for_dataframe()
         )
 
         # Preview section
@@ -226,25 +282,15 @@ class NovaAvatarApp:
                     search_term=search
                 )
 
-                # Format for dataframe
-                data = []
-                full_text_count = 0
-                for item in self.scraped_items:
-                    # Add indicator for full text availability
-                    has_full_text = item.full_text and len(item.full_text) > 100
-                    if has_full_text:
-                        full_text_count += 1
-                        status = "✓ Full"
-                    else:
-                        status = "⚠️ Desc"
+                # Save scraped items to disk
+                self._save_scraped_items()
 
-                    data.append([
-                        False,  # checkbox
-                        item.title,
-                        item.source_name,
-                        status,
-                        item.description[:100] + "..."
-                    ])
+                # Format for dataframe
+                data = self._format_items_for_dataframe()
+
+                # Count full articles
+                full_text_count = sum(1 for item in self.scraped_items
+                                     if item.full_text and len(item.full_text) > 100)
 
                 search_msg = f" for '{search}'" if search else ""
                 return f"✅ Scraped {len(self.scraped_items)} items{search_msg} ({full_text_count} full articles)", data
@@ -257,23 +303,39 @@ class NovaAvatarApp:
             try:
                 # Validate scraped items exist
                 if not self.scraped_items:
-                    return "⚠️ Please scrape content first", "", None
+                    return "⚠️ Please scrape content first", "", None, ""
+
+                # DEBUG: Log what we received
+                logger.info(f"Dataframe type: {type(dataframe_data)}")
+                logger.info(f"Dataframe data: {dataframe_data}")
+
+                # Extract rows from dataframe data
+                # Gradio returns dict with 'data' key or pandas DataFrame
+                if isinstance(dataframe_data, dict):
+                    rows = dataframe_data.get('data', [])
+                elif hasattr(dataframe_data, 'values'):  # pandas DataFrame
+                    rows = dataframe_data.values.tolist()
+                else:
+                    rows = dataframe_data
 
                 # Get selected items
                 selected = []
-                for i, row in enumerate(dataframe_data):
+                logger.info(f"Processing {len(rows)} rows, scraped_items has {len(self.scraped_items)} items")
+                for i, row in enumerate(rows):
+                    logger.info(f"Row {i}: {row}")
                     if i >= len(self.scraped_items):
                         logger.warning(f"Row index {i} exceeds scraped_items length {len(self.scraped_items)}")
                         continue
                     if row[0]:  # checkbox is True
-                        selected.append(self.scraped_items[i])
+                        selected.append((i, self.scraped_items[i]))
+                        logger.info(f"✓ Selected item at index {i}: {self.scraped_items[i].title}")
 
                 if not selected:
-                    return "⚠️ No items selected", "", None
+                    return "⚠️ No items selected", "", None, ""
 
                 # Preview first selected item only
-                item = selected[0]
-                logger.info(f"Previewing: {item.title}")
+                idx, item = selected[0]
+                logger.info(f"Previewing item at index {idx}: {item.title}")
 
                 # Fetch full article
                 article_text = "Fetching article...\n\n"
@@ -350,20 +412,38 @@ class NovaAvatarApp:
                 if not self.scraped_items:
                     return "⚠️ Please scrape content first"
 
+                # DEBUG: Log what we received
+                logger.info(f"Generate - Dataframe type: {type(dataframe_data)}")
+
+                # Extract rows from dataframe data
+                if isinstance(dataframe_data, dict):
+                    rows = dataframe_data.get('data', [])
+                elif hasattr(dataframe_data, 'values'):  # pandas DataFrame
+                    rows = dataframe_data.values.tolist()
+                else:
+                    rows = dataframe_data
+
                 # Get selected items
                 selected = []
-                for i, row in enumerate(dataframe_data):
+                logger.info(f"Generate: Processing {len(rows)} rows, scraped_items has {len(self.scraped_items)} items")
+                for i, row in enumerate(rows):
+                    logger.info(f"Generate Row {i}: {row}")
                     if i >= len(self.scraped_items):
                         logger.warning(f"Row index {i} exceeds scraped_items length {len(self.scraped_items)}")
                         continue
                     if row[0]:  # checkbox is True
-                        selected.append(self.scraped_items[i])
+                        selected.append((i, self.scraped_items[i]))
+                        logger.info(f"✓ Generate selected item at index {i}: {self.scraped_items[i].title}")
 
                 if not selected:
                     return "⚠️ No items selected"
 
+                # TESTING MODE: Only generate FIRST selected video
+                selected = selected[:1]
+                logger.info(f"⚠️ TESTING MODE: Limited to first selected item only")
+
                 # Generate videos
-                progress_text = f"Generating {len(selected)} videos...\n"
+                progress_text = f"Generating {len(selected)} video (TESTING MODE - only first selected)...\n"
                 progress_text += f"Image: {avatar_img}\n"
 
                 if use_flux_val:
@@ -374,8 +454,8 @@ class NovaAvatarApp:
                 else:
                     progress_text += "Mode: Using image as-is (no Flux/compositing)\n\n"
 
-                for i, item in enumerate(selected):
-                    progress_text += f"\n[{i+1}/{len(selected)}] Processing: {item.title}\n"
+                for i, (idx, item) in enumerate(selected):
+                    progress_text += f"\n[{i+1}/{len(selected)}] Processing index {idx}: {item.title}\n"
 
                     def progress_callback(percent, status):
                         nonlocal progress_text
@@ -651,22 +731,29 @@ class NovaAvatarApp:
         app.launch(**launch_settings)
 
 
+# Setup logging
+logger.add(
+    "logs/novaavatar_{time}.log",
+    rotation="1 day",
+    retention="7 days",
+    level="INFO"
+)
+
+# Create app and expose demo for Gradio hot reload
+_app = NovaAvatarApp()
+demo = _app.build_interface()
+
+
 def main():
     """Main entry point."""
 
-    # Setup logging
-    logger.add(
-        "logs/novaavatar_{time}.log",
-        rotation="1 day",
-        retention="7 days",
-        level="INFO"
+    logger.info("Launching NovaAvatar on port 7860...")
+    demo.launch(
+        server_name="0.0.0.0",
+        server_port=7860,
+        share=False,
+        show_error=True
     )
-
-    # Create app
-    app = NovaAvatarApp()
-
-    # Launch
-    app.launch()
 
 
 if __name__ == "__main__":
