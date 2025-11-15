@@ -1,0 +1,1 @@
+"""NovaAvatar test suite."""
