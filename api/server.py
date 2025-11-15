@@ -74,6 +74,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Include routers
+try:
+    from api.routers.conversations import router as conversations_router
+    app.include_router(conversations_router)
+    logger.info("Conversations router registered")
+except ImportError as e:
+    logger.warning(f"Conversations router not available: {e}")
+
 # Initialize orchestrator
 orchestrator = PipelineOrchestrator()
 
@@ -90,7 +98,9 @@ async def root():
             "scrape": "/api/scrape",
             "generate": "/api/generate",
             "jobs": "/api/jobs",
-            "queue": "/api/queue"
+            "queue": "/api/queue",
+            "conversations": "/api/conversations",
+            "avatars": "/api/conversations/avatars"
         }
     }
 
