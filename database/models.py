@@ -203,3 +203,146 @@ class SystemMetric(Base):
 
     def __repr__(self):
         return f"<SystemMetric(name={self.metric_name}, value={self.metric_value})>"
+
+
+class AvatarProfile(Base):
+    """Avatar profile for multi-avatar conversations."""
+
+    __tablename__ = "avatar_profiles"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    # Profile details
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    personality = Column(Text, nullable=False)  # Personality description for script generation
+    voice_style = Column(String(100), nullable=True)  # Voice characteristics
+
+    # Visual representation
+    image_path = Column(String(512), nullable=True)  # Path to avatar image
+    avatar_style = Column(String(100), default="professional")  # Visual style
+
+    # Metadata
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    is_active = Column(Boolean, default=True)
+
+    # Relationships
+    dialogues = relationship("DialogueLine", back_populates="avatar")
+
+    def __repr__(self):
+        return f"<AvatarProfile(name={self.name})>"
+
+    def to_dict(self):
+        """Convert to dictionary."""
+        return {
+            "id": str(self.id),
+            "name": self.name,
+            "description": self.description,
+            "personality": self.personality,
+            "voice_style": self.voice_style,
+            "image_path": self.image_path,
+            "avatar_style": self.avatar_style,
+            "is_active": self.is_active,
+        }
+
+
+class Conversation(Base):
+    """Multi-avatar conversation."""
+
+    __tablename__ = "conversations"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    conversation_id = Column(String(255), unique=True, index=True, nullable=False)
+
+    # Conversation details
+    title = Column(String(512), nullable=False)
+    topic = Column(Text, nullable=False)
+    context = Column(Text, nullable=True)  # Additional context for the conversation
+
+    # Configuration
+    num_avatars = Column(Integer, nullable=False)
+    num_exchanges = Column(Integer, default=3)  # Number of back-and-forth exchanges
+    conversation_style = Column(String(100), default="discussion")  # discussion, debate, interview, etc.
+
+    # Generated content
+    script = Column(JSON, nullable=True)  # Full conversation script
+
+    # Final video
+    final_video_path = Column(String(512), nullable=True)
+
+    # Status
+    status = Column(String(50), default="pending")  # pending, generating, completed, failed
+    progress = Column(Integer, default=0)
+    error = Column(Text, nullable=True)
+
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+
+    # Relationships
+    dialogue_lines = relationship("DialogueLine", back_populates="conversation", cascade="all, delete-orphan")
+
+    def __repr__(self):
+        return f"<Conversation(id={self.conversation_id}, title={self.title})>"
+
+    def to_dict(self):
+        """Convert to dictionary."""
+        return {
+            "id": str(self.id),
+            "conversation_id": self.conversation_id,
+            "title": self.title,
+            "topic": self.topic,
+            "num_avatars": self.num_avatars,
+            "num_exchanges": self.num_exchanges,
+            "conversation_style": self.conversation_style,
+            "status": self.status,
+            "progress": self.progress,
+            "final_video_path": self.final_video_path,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+        }
+
+
+class DialogueLine(Base):
+    """Single line of dialogue in a conversation."""
+
+    __tablename__ = "dialogue_lines"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    # Relationships
+    conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id"), nullable=False)
+    avatar_id = Column(UUID(as_uuid=True), ForeignKey("avatar_profiles.id"), nullable=False)
+
+    # Dialogue details
+    sequence = Column(Integer, nullable=False)  # Order in conversation
+    text = Column(Text, nullable=False)
+    duration_estimate = Column(Float, nullable=True)
+
+    # Generated media
+    audio_path = Column(String(512), nullable=True)
+    video_path = Column(String(512), nullable=True)
+
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Relationships
+    conversation = relationship("Conversation", back_populates="dialogue_lines")
+    avatar = relationship("AvatarProfile", back_populates="dialogues")
+
+    def __repr__(self):
+        return f"<DialogueLine(sequence={self.sequence}, avatar={self.avatar_id})>"
+
+    def to_dict(self):
+        """Convert to dictionary."""
+        return {
+            "id": str(self.id),
+            "sequence": self.sequence,
+            "text": self.text,
+            "duration_estimate": self.duration_estimate,
+            "audio_path": self.audio_path,
+            "video_path": self.video_path,
+            "avatar": self.avatar.to_dict() if self.avatar else None,
+        }

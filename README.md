@@ -23,6 +23,13 @@ Built on [OmniAvatar](https://github.com/Omni-Avatar/OmniAvatar) - adds automate
 5. 🎬 **Avatar videos** with OmniAvatar
 6. ✅ **Review queue** for approval workflow
 
+**NEW: Multi-Avatar Conversations 🗣️🗣️🗣️**
+- Create engaging conversations between multiple avatars
+- AI-generated dialogue with unique personalities
+- Automatic video stitching with transitions
+- Panel discussions, debates, interviews, and more
+- [Learn more →](CONVERSATIONS.md)
+
 **Two interfaces:**
 - 🖥️ **Gradio Web UI** - Visual dashboard (port 7860)
 - 🔌 **REST API** - Programmatic access (port 8000)
