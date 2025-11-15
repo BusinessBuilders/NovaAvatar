@@ -1,0 +1,30 @@
+# Testing configuration for docker-compose
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.test.yml run test
+
+version: '3.8'
+
+services:
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: test
+    container_name: novaavatar-test
+    environment:
+      - TESTING=true
+      - DATABASE_URL=postgresql://novaavatar:novaavatar_dev_password@postgres:5432/novaavatar_test
+      - REDIS_URL=redis://redis:6379/1
+    command: pytest tests/ -v --cov --cov-report=term-missing --cov-report=html
+    volumes:
+      - .:/app
+      - test_coverage:/app/htmlcov
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - novaavatar-network
+
+volumes:
+  test_coverage:

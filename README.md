@@ -1,5 +1,12 @@
 # NovaAvatar
 
+[![Tests](https://github.com/BusinessBuilders/NovaAvatar/workflows/Tests/badge.svg)](https://github.com/BusinessBuilders/NovaAvatar/actions/workflows/test.yml)
+[![Lint](https://github.com/BusinessBuilders/NovaAvatar/workflows/Lint/badge.svg)](https://github.com/BusinessBuilders/NovaAvatar/actions/workflows/lint.yml)
+[![codecov](https://codecov.io/gh/BusinessBuilders/NovaAvatar/branch/main/graph/badge.svg)](https://codecov.io/gh/BusinessBuilders/NovaAvatar)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE.txt)
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+
 **Automated avatar video generation with AI-powered content pipeline**
 
 Built on [OmniAvatar](https://github.com/Omni-Avatar/OmniAvatar) - adds automated content scraping, script generation, and production workflow.

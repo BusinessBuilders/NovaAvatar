@@ -1,0 +1,30 @@
+# Development overrides for docker-compose
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+version: '3.8'
+
+services:
+  api:
+    build:
+      target: development
+    environment:
+      - DEBUG=true
+      - LOG_LEVEL=DEBUG
+      - ENABLE_VRAM_MANAGEMENT=true
+    volumes:
+      - .:/app:delegated
+      - dev_cache:/root/.cache
+    command: uvicorn api.server:app --host 0.0.0.0 --port 8000 --reload --log-level debug
+
+  frontend:
+    build:
+      target: development
+    environment:
+      - DEBUG=true
+      - LOG_LEVEL=DEBUG
+    volumes:
+      - .:/app:delegated
+      - dev_cache:/root/.cache
+
+volumes:
+  dev_cache:
